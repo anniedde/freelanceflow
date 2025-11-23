@@ -367,14 +367,6 @@ const Dashboard = () => {
         >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-gray-900">Revenue Trends</h2>
-            <button
-              onClick={handleRunAnalysis}
-              disabled={isAnalyzing}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Sparkles className="w-4 h-4" />
-              {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
-            </button>
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={revenueData}>

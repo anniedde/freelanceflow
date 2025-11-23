@@ -17,14 +17,25 @@ export class AIService {
   private openai: OpenAI | null = null;
 
   /**
-   * Strip markdown code blocks from response
+   * Extract JSON from response, removing markdown and extra text
    */
-  private stripMarkdownCodeBlocks(text: string): string {
-    // Remove ```json and ``` markers
-    return text
+  private extractJSON(text: string): string {
+    // Remove markdown code blocks
+    let cleaned = text
       .replace(/```json\s*/g, '')
       .replace(/```\s*/g, '')
       .trim();
+
+    // Try to find JSON object boundaries
+    const jsonStart = cleaned.indexOf('{');
+    const jsonEnd = cleaned.lastIndexOf('}');
+
+    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+      // Extract just the JSON object
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
+
+    return cleaned;
   }
 
   constructor() {
@@ -169,7 +180,7 @@ Return your analysis in JSON format with keys:
     const response = await this.chat(messages, { temperature: 0.3 });
 
     try {
-      const cleanedResponse = this.stripMarkdownCodeBlocks(response);
+      const cleanedResponse = this.extractJSON(response);
       const parsed = JSON.parse(cleanedResponse);
       return {
         insights: parsed.insights || [],
@@ -212,7 +223,7 @@ Return in JSON format with keys: suggestions (array), priorityOrder (array of ta
     const response = await this.chat(messages, { temperature: 0.4 });
 
     try {
-      const cleanedResponse = this.stripMarkdownCodeBlocks(response);
+      const cleanedResponse = this.extractJSON(response);
       const parsed = JSON.parse(cleanedResponse);
       return {
         suggestions: parsed.suggestions || [],

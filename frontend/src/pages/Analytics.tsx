@@ -455,8 +455,19 @@ const Analytics = () => {
           <div className="text-center py-12">
             <Sparkles className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-900 font-medium mb-2">No insights available yet</p>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 mb-6">
               Add some data (invoices, projects, clients) to see insights
+            </p>
+            <button
+              onClick={handleRunAnalysis}
+              disabled={isAnalyzing}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              Run AI Analysis with Grok
+            </button>
+            <p className="text-xs text-gray-500 mt-2">
+              Get advanced AI-powered insights using Grok
             </p>
           </div>
         ) : (
@@ -487,6 +498,19 @@ const Analytics = () => {
                 </div>
               </div>
             ))}
+            <div className="mt-6 pt-4 border-t border-gray-200 text-center">
+              <button
+                onClick={handleRunAnalysis}
+                disabled={isAnalyzing}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all disabled:opacity-50"
+              >
+                <Sparkles className="w-4 h-4" />
+                {aiConfidence !== null ? 'Refresh AI Analysis' : 'Run AI Analysis with Grok'}
+              </button>
+              <p className="text-xs text-gray-500 mt-2">
+                Get advanced AI-powered insights using Grok
+              </p>
+            </div>
           </div>
         )}
       </div>
