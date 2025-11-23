@@ -1,0 +1,230 @@
+import { Router } from 'express';
+import { authenticate, AuthRequest } from '../middleware/auth';
+import aiService, { ChatMessage } from '../services/aiService';
+// import JobQueueService from '../services/jobQueue'; // Temporarily disabled
+import logger from '../utils/logger';
+
+const router = Router();
+
+// Chat with AI (non-streaming)
+router.post('/chat', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { messages, temperature = 0.7, maxTokens = 1000 } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({
+        error: 'Messages array is required',
+        code: 400
+      });
+    }
+
+    // Add system prompt if not present
+    const chatMessages: ChatMessage[] = messages[0]?.role === 'system'
+      ? messages
+      : [{ role: 'system', content: aiService.getSystemPrompt() }, ...messages];
+
+    const response = await aiService.chat(chatMessages, {
+      temperature,
+      maxTokens,
+    });
+
+    res.json({
+      response,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('AI chat error:', error);
+    res.status(500).json({
+      error: 'Failed to get AI response',
+      code: 500
+    });
+  }
+});
+
+// Generate smart reply for inbox
+router.post('/smart-reply', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { context, messageHistory = [], tone = 'professional' } = req.body;
+
+    if (!context) {
+      return res.status(400).json({
+        error: 'Context is required',
+        code: 400
+      });
+    }
+
+    const reply = await aiService.generateSmartReply(context, messageHistory, tone);
+
+    res.json({
+      reply,
+      tone,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Smart reply generation error:', error);
+    res.status(500).json({
+      error: 'Failed to generate smart reply',
+      code: 500
+    });
+  }
+});
+
+// Queue revenue analysis job
+router.post('/queue/revenue-analysis', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { period = 'month' } = req.body;
+    const userId = req.user!.sub;
+
+    // Get user's revenue data
+    const { default: prisma } = await import('../utils/db');
+    const revenueData = await prisma.revenue.findMany({
+      where: {
+        // Note: Revenue model doesn't have userId - this might need adjustment
+        // For now, we'll get all revenue data (assuming single-user or shared data)
+      },
+      orderBy: { date: 'desc' },
+      take: 100, // Last 100 entries
+    });
+
+    const jobId = await JobQueueService.queueRevenueAnalysis({
+      userId,
+      period,
+      revenueData,
+    });
+
+    res.json({
+      jobId,
+      status: 'queued',
+      message: 'Revenue analysis job queued successfully',
+      estimatedTime: '30-60 seconds',
+    });
+  } catch (error) {
+    logger.error('Queue revenue analysis error:', error);
+    res.status(500).json({
+      error: 'Failed to queue revenue analysis',
+      code: 500
+    });
+  }
+});
+
+// Queue task optimization job
+router.post('/queue/task-optimization', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.sub;
+
+    // Get user's tasks
+    const { default: prisma } = await import('../utils/db');
+    const tasks = await prisma.task.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        project: {
+          select: {
+            name: true,
+            dueDate: true,
+            budget: true,
+          },
+        },
+      },
+      orderBy: { dueDate: 'asc' },
+    });
+
+    const jobId = await JobQueueService.queueTaskOptimization({
+      userId,
+      tasks,
+    });
+
+    res.json({
+      jobId,
+      status: 'queued',
+      message: 'Task optimization job queued successfully',
+      estimatedTime: '15-30 seconds',
+    });
+  } catch (error) {
+    logger.error('Queue task optimization error:', error);
+    res.status(500).json({
+      error: 'Failed to queue task optimization',
+      code: 500
+    });
+  }
+});
+
+// Get job status
+router.get('/job/:queueName/:jobId', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { queueName, jobId } = req.params;
+    const userId = req.user!.sub;
+
+    const status = await JobQueueService.getJobStatus(queueName, jobId);
+
+    // Basic security check - in production, you'd want to verify job ownership
+    res.json(status);
+  } catch (error) {
+    logger.error('Get job status error:', error);
+    res.status(500).json({
+      error: 'Failed to get job status',
+      code: 500
+    });
+  }
+});
+
+// Get user's active jobs
+router.get('/jobs', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.sub;
+    const jobs = await JobQueueService.getUserJobs(userId);
+
+    res.json({ jobs });
+  } catch (error) {
+    logger.error('Get user jobs error:', error);
+    res.status(500).json({
+      error: 'Failed to get user jobs',
+      code: 500
+    });
+  }
+});
+
+// AI health check
+router.get('/health', async (req, res) => {
+  try {
+    const isHealthy = await aiService.healthCheck();
+
+    res.json({
+      status: isHealthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('AI health check error:', error);
+    res.status(500).json({
+      status: 'error',
+      error: 'AI service unavailable',
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Clean up old jobs (admin endpoint)
+router.post('/cleanup', authenticate, async (req: AuthRequest, res) => {
+  try {
+    // In production, check if user is admin
+    // if (req.user!.role !== 'ADMIN') {
+    //   return res.status(403).json({ error: 'Admin access required', code: 403 });
+    // }
+
+    await JobQueueService.cleanupOldJobs();
+
+    res.json({
+      message: 'Job cleanup completed',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error('Job cleanup error:', error);
+    res.status(500).json({
+      error: 'Failed to cleanup jobs',
+      code: 500
+    });
+  }
+});
+
+export default router;

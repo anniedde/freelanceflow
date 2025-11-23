@@ -1,0 +1,208 @@
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+
+import logger from './utils/logger';
+import redisClient from './utils/redis';
+import aiService from './services/aiService';
+
+// Routes
+import authRoutes from './routes/auth';
+import usersRoutes from './routes/users';
+import clientsRoutes from './routes/clients';
+import projectsRoutes from './routes/projects';
+import tasksRoutes from './routes/tasks';
+import analyticsRoutes from './routes/analytics';
+import inboxRoutes from './routes/inbox';
+import invoicesRoutes from './routes/invoices';
+import attachmentsRoutes from './routes/attachments';
+import aiRoutes from './routes/ai';
+
+dotenv.config();
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  },
+});
+
+const PORT = process.env.PORT || 3001;
+
+// Middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.path}`);
+  next();
+});
+
+// API Routes
+app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/users', usersRoutes);
+app.use('/api/v1/clients', clientsRoutes);
+app.use('/api/v1/projects', projectsRoutes);
+app.use('/api/v1/tasks', tasksRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/inbox', inboxRoutes);
+app.use('/api/v1/invoices', invoicesRoutes);
+app.use('/api/v1/ai', aiRoutes);
+app.use('/api/v1', attachmentsRoutes);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error', code: 500 });
+});
+
+// Socket.io setup
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+
+  if (!token) {
+    return next(new Error('Authentication error'));
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+    socket.data.user = decoded;
+    next();
+  } catch (err) {
+    next(new Error('Authentication error'));
+  }
+});
+
+io.on('connection', (socket) => {
+  logger.info(`Client connected: ${socket.id}`);
+
+  const userId = socket.data.user.sub;
+  const teamId = socket.data.user.teamId;
+
+  // Join user and team rooms
+  socket.join(`user:${userId}`);
+  if (teamId) {
+    socket.join(`team:${teamId}`);
+  }
+
+  // Handle team join
+  socket.on('join-team', (data) => {
+    if (teamId) {
+      socket.join(`team:${teamId}`);
+      logger.info(`User ${userId} joined team ${teamId}`);
+    }
+  });
+
+  // Handle task updates
+  socket.on('task-updated', (data) => {
+    if (teamId) {
+      socket.to(`team:${teamId}`).emit('task-updated', data);
+    }
+  });
+
+  // Handle messages
+  socket.on('message-sent', (data) => {
+    if (teamId) {
+      socket.to(`team:${teamId}`).emit('message-sent', data);
+    }
+  });
+
+  // Handle AI responses
+  socket.on('ai-request', async (data) => {
+    try {
+      const { messages, temperature = 0.7, maxTokens = 1000, requestId } = data;
+
+      if (!messages || !Array.isArray(messages)) {
+        socket.emit('ai-error', {
+          error: 'Messages array is required',
+          requestId,
+        });
+        return;
+      }
+
+      // Add system prompt if not present
+      const chatMessages = messages[0]?.role === 'system'
+        ? messages
+        : [{ role: 'system', content: aiService.getSystemPrompt() }, ...messages];
+
+      // Stream the AI response
+      let fullResponse = '';
+      await aiService.chat(chatMessages, {
+        temperature,
+        maxTokens,
+        stream: true,
+        onToken: (token) => {
+          fullResponse += token;
+          socket.emit('ai-token', {
+            token,
+            requestId,
+          });
+        }
+      });
+
+      // Send completion signal
+      socket.emit('ai-response', {
+        message: fullResponse,
+        requestId,
+      });
+
+      logger.info(`AI request completed for user ${userId}, request ${requestId}`);
+    } catch (error) {
+      logger.error('AI request error:', error);
+      socket.emit('ai-error', {
+        error: 'Failed to process AI request',
+        requestId: data.requestId,
+      });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    logger.info(`Client disconnected: ${socket.id}`);
+  });
+});
+
+// Start server
+async function startServer() {
+  try {
+    // Connect to Redis
+    await redisClient.connect();
+    logger.info('Redis connected');
+
+    httpServer.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  await redisClient.quit();
+  httpServer.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});

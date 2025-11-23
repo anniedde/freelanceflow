@@ -1,0 +1,208 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String   // Hashed with bcrypt
+  role      Role     @default(MEMBER)
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ownedTeam Team?     @relation("TeamOwner")
+  teamId    String?
+  team      Team?     @relation("TeamMembers", fields: [teamId], references: [id])
+  clients   Client[]
+  projects  Project[]
+  tasks     Task[]
+
+  @@map("users")
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  owner   User     @relation("TeamOwner", fields: [ownerId], references: [id])
+  ownerId String   @unique
+  members User[]   @relation("TeamMembers")
+
+  clients   Client[]
+  projects  Project[]
+  tasks     Task[]
+
+  @@map("teams")
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Client {
+  id          String   @id @default(cuid())
+  name        String
+  email       String
+  phone       String?
+  avatarUrl   String?
+  tags        String[] // e.g., ["VIP", "Recurring"]
+  totalRevenue Float   @default(0)
+  lastContact DateTime?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userId   String
+  user     User     @relation(fields: [userId], references: [id])
+  teamId   String?
+  team     Team?    @relation(fields: [teamId], references: [id])
+  projects Project[]
+  messages Message[]
+
+  @@map("clients")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String?  // e.g., "Web Dev", "Consulting"
+  budget      Float?
+  status      ProjectStatus @default(DRAFT)
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  clientId String
+  client   Client   @relation(fields: [clientId], references: [id])
+  userId   String
+  user     User     @relation(fields: [userId], references: [id])
+  teamId   String?
+  team     Team?    @relation(fields: [teamId], references: [id])
+  tasks    Task[]
+  invoices Invoice[]
+  messages Message[]
+  attachments Attachment[]
+
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  ON_REVIEW
+  COMPLETED
+  CANCELED
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  dueDate     DateTime?
+  progress    Int      @default(0) // 0-100
+  priority    Int      @default(1) // 1-5
+  category    String?  // e.g., "Follow-up", "Invoice"
+  status      TaskStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  teamId    String?
+  team      Team?    @relation(fields: [teamId], references: [id])
+
+  @@map("tasks")
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Invoice {
+  id          String   @id @default(cuid())
+  amount      Float
+  status      InvoiceStatus @default(DRAFT)
+  dueDate     DateTime?
+  paidDate    DateTime?
+  fileUrl     String?  // Multer upload
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+}
+
+// Revenue tracking (for analytics)
+model Revenue {
+  id        String   @id @default(cuid())
+  amount    Float
+  date      DateTime
+  source    String   // e.g., "Project X"
+  projected Boolean  @default(false) // For AI forecasts
+  createdAt DateTime @default(now())
+
+  @@map("revenues")
+}
+
+// Messages for Inbox
+model Message {
+  id          String   @id @default(cuid())
+  content     String
+  isFromAI    Boolean  @default(false)
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+
+  @@map("messages")
+}
+
+// File attachments for projects
+model Attachment {
+  id           String   @id @default(cuid())
+  filename     String   // Original filename
+  fileUrl      String   // Path to file on disk
+  fileSize     Int      // Size in bytes
+  mimeType     String   // File MIME type
+  createdAt    DateTime @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+}
